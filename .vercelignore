@@ -1,0 +1,6 @@
+tests/
+docs/
+scripts/
+.github/
+vapi/assistant.json
+*.db

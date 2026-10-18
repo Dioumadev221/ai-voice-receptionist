@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     max_days_ahead: int = 60
     staff_alert_phone: str = ""  # emergencies and new leads are texted here
 
+    # Public product site. DEMO_MODE=true makes the dashboard public (sample clinic, reset daily)
+    # and rate-limits the browser call.
+    demo_mode: bool = False
+    public_url: str = ""
+    cron_secret: str = ""  # Vercel Cron sends "Authorization: Bearer <CRON_SECRET>"
+    demo_turns_per_ip_per_hour: int = 120
+
+    # Optional LLM for the browser call (any OpenAI-compatible API: OpenAI, Groq, OpenRouter...).
+    # Without a key, the browser call runs the deterministic dialogue engine on the same tools.
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4.1-mini"
+
     # Browser demo page (/demo). The public key is safe to expose; it can only start calls.
     vapi_public_key: str = ""
     vapi_assistant_id: str = ""

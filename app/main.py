@@ -2,16 +2,18 @@ import hmac
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import dashboard, demo, vapi
+from app import dashboard, demo_data, vapi, web
 from app.booking import as_utc
 from app.clinic import SERVICES, speak_datetime
 from app.config import Settings, get_settings
-from app.db import get_db, init_db
+from app.db import SessionLocal, get_db, init_db
 from app.integrations.sms import send_sms
 from app.models import Appointment
 
@@ -21,13 +23,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    settings = get_settings()
+    if settings.demo_mode:
+        with SessionLocal() as db:
+            if demo_data.is_empty(db):
+                demo_data.reset(db, settings)
     yield
 
 
-app = FastAPI(title="AI Voice Receptionist", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Recepta · AI Voice Receptionist", version="1.1.0", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+app.include_router(web.router)
 app.include_router(vapi.router)
 app.include_router(dashboard.router)
-app.include_router(demo.router)
 
 
 @app.get("/healthz", tags=["ops"])

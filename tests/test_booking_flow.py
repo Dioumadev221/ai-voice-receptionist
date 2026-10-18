@@ -94,9 +94,10 @@ def test_lead_capture_and_call_report_feed_dashboard(client):
     assert client.post("/vapi/webhook", json=report, headers={"X-Vapi-Secret": "test-secret"}).status_code == 200
     stats = client.get("/api/stats", auth=("admin", "admin")).json()
     assert stats["calls"] == 1 and stats["leads"] == 1 and stats["resolution_rate"] == 100
-    page = client.get("/", auth=("admin", "admin"))
+    page = client.get("/dashboard", auth=("admin", "admin"))
     assert page.status_code == 200 and "Sam Park" in page.text and "Invisalign pricing" in page.text
-    assert client.get("/", auth=("admin", "wrong")).status_code == 401
+    assert client.get("/dashboard", auth=("admin", "wrong")).status_code == 401
+    assert client.get("/dashboard").status_code == 401
 
 
 def test_reminder_job_requires_token(client):
@@ -110,6 +111,7 @@ def test_string_arguments_and_unknown_tool(client):
     assert "Unknown tool" in tool_call(client, "launch_rockets", {})
 
 
-def test_demo_page_renders_without_keys(client):
-    r = client.get("/demo")
-    assert r.status_code == 200 and "Demo not configured" in r.text
+def test_public_pages_render(client):
+    assert "Every call answered" in client.get("/").text
+    assert "Behind the call" in client.get("/call").text
+    assert client.get("/static/recepta.css").status_code == 200

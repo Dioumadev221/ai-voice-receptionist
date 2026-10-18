@@ -106,6 +106,16 @@ def find_slots(
     return results
 
 
+def is_free(db: Session, settings: Settings, service: Service, start_local: datetime,
+            busy_provider: BusyProvider | None = None, exclude_id: int | None = None) -> bool:
+    try:
+        validate_slot(settings, service, start_local)
+        _assign_chair(db, settings, service, start_local, busy_provider, exclude_id)
+        return True
+    except BookingError:
+        return False
+
+
 def validate_slot(settings: Settings, service: Service, start_local: datetime) -> None:
     today_local = _now().astimezone(settings.tz).date()
     if as_utc(start_local) < _earliest_allowed(settings, service):

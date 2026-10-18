@@ -1,32 +1,44 @@
-"""Front-desk dashboard: what the AI receptionist did, and what's coming up."""
+"""Front-desk dashboard: the week's schedule, every call, and the callback list."""
 
 import hmac
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from jinja2 import Environment, select_autoescape
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import demo_data
 from app.booking import as_utc
-from app.clinic import SERVICES, is_within_hours
+from app.clinic import SERVICES, close_time, is_within_hours
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import Appointment, CallLog, Lead
+from app.templating import render
 
 router = APIRouter(tags=["dashboard"])
-basic = HTTPBasic()
+basic = HTTPBasic(auto_error=False)
+
+SHORT = {"checkup": "check-up", "new_patient": "new patient", "whitening": "whitening", "emergency": "emergency",
+         "consultation": "consult", "cleaning": "cleaning", "filling": "filling"}
+SERVICE_COLORS = {
+    "checkup": "#1f4fe0", "cleaning": "#0e8a8a", "new_patient": "#6e46d9", "filling": "#b8650f",
+    "whitening": "#c9417a", "consultation": "#3d6a8f", "emergency": "#cf2e35",
+}
+ROW_PX = 34  # one 30-minute row
 
 
-def require_admin(creds: HTTPBasicCredentials = Depends(basic), settings: Settings = Depends(get_settings)) -> None:
-    if not hmac.compare_digest(creds.password, settings.admin_password):
+def require_admin(creds: HTTPBasicCredentials | None = Depends(basic), settings: Settings = Depends(get_settings)) -> None:
+    """Public in demo mode (sample clinic); HTTP Basic (admin / ADMIN_PASSWORD) for a real clinic."""
+    if settings.demo_mode:
+        return
+    if not creds or not hmac.compare_digest(creds.password, settings.admin_password):
         raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic"})
 
 
 def pretty_phone(e164: str) -> str:
-    d = e164.lstrip("+")
+    d = (e164 or "").lstrip("+")
     return f"({d[1:4]}) {d[4:7]}-{d[7:]}" if len(d) == 11 and d.startswith("1") else e164
 
 
@@ -37,9 +49,7 @@ def build_stats(db: Session, settings: Settings, days: int = 30) -> dict:
         select(func.count()).select_from(Appointment).where(Appointment.created_at >= since, Appointment.source_call_id.is_not(None))
     )
     leads = db.scalar(select(func.count()).select_from(Lead).where(Lead.created_at >= since))
-    after_hours = sum(
-        1 for c in calls if not is_within_hours(settings, as_utc(c.started_at or c.created_at).astimezone(settings.tz), 1)
-    )
+    after_hours = sum(1 for c in calls if _after_hours(settings, c))
     durations = [c.duration_seconds for c in calls if c.duration_seconds]
     resolved = sum(1 for c in calls if c.outcome != "info")
     return {
@@ -53,72 +63,97 @@ def build_stats(db: Session, settings: Settings, days: int = 30) -> dict:
     }
 
 
-TEMPLATE = Environment(autoescape=select_autoescape()).from_string("""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ clinic }} - AI Receptionist</title>
-<style>
-:root{--bg:#f6f7f9;--card:#fff;--ink:#14181f;--muted:#5d6675;--line:#e3e6eb;--accent:#0f766e}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1216;--card:#171b21;--ink:#e8ebef;--muted:#98a1ae;--line:#2a3039;--accent:#2dd4bf}}
-*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
-main{max-width:1100px;margin:0 auto;padding:24px 16px}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 10px}
-.muted{color:var(--muted)}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:18px}
-.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}.kpi b{display:block;font-size:26px}
-.wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:10px}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--line)}
-.tag.booked,.tag.rescheduled{background:var(--accent);color:var(--bg)}a{color:var(--accent)}
-</style></head><body><main>
-<h1>{{ clinic }} · AI Receptionist</h1><div class="muted">Last 30 days · times in {{ tz }}</div>
-<div class="kpis">
-<div class="kpi"><b>{{ s.calls }}</b><span class="muted">calls answered</span></div>
-<div class="kpi"><b>{{ s.booked }}</b><span class="muted">appointments booked by AI</span></div>
-<div class="kpi"><b>{{ s.resolution_rate }}%</b><span class="muted">calls resolved without staff</span></div>
-<div class="kpi"><b>{{ s.after_hours }}</b><span class="muted">calls while office closed</span></div>
-<div class="kpi"><b>{{ s.leads }}</b><span class="muted">callback leads</span></div>
-<div class="kpi"><b>${{ "%.2f"|format(s.cost) }}</b><span class="muted">voice cost ({{ s.avg_minutes }} min avg)</span></div>
-</div>
-<h2>Upcoming appointments</h2><div class="wrap"><table><tr><th>When</th><th>Patient</th><th>Service</th><th>Phone</th><th>Code</th><th>Chair</th></tr>
-{% for a in appts %}<tr><td>{{ a.when }}</td><td>{{ a.name }}{% if a.new %} <span class="tag">new</span>{% endif %}</td><td>{{ a.service }}</td><td>{{ a.phone }}</td><td>{{ a.code }}</td><td>{{ a.chair }}</td></tr>
-{% else %}<tr><td colspan="6" class="muted">Nothing booked yet.</td></tr>{% endfor %}</table></div>
-<h2>Recent calls</h2><div class="wrap"><table><tr><th>When</th><th>Caller</th><th>Outcome</th><th>Summary</th><th>Recording</th></tr>
-{% for c in calls %}<tr><td>{{ c.when }}</td><td>{{ c.caller }}</td><td><span class="tag {{ c.outcome }}">{{ c.outcome }}</span></td><td>{{ c.summary }}</td><td>{% if c.rec %}<a href="{{ c.rec }}">listen</a>{% endif %}</td></tr>
-{% else %}<tr><td colspan="5" class="muted">No calls yet.</td></tr>{% endfor %}</table></div>
-<h2>Leads to call back</h2><div class="wrap"><table><tr><th>When</th><th>Name</th><th>Phone</th><th>Reason</th><th>Insurance</th><th>Urgency</th></tr>
-{% for l in leads %}<tr><td>{{ l.when }}</td><td>{{ l.name }}</td><td>{{ l.phone }}</td><td>{{ l.reason }}</td><td>{{ l.insurance }}</td><td>{{ l.urgency }}</td></tr>
-{% else %}<tr><td colspan="6" class="muted">No leads yet.</td></tr>{% endfor %}</table></div>
-</main></body></html>""")
+def _after_hours(settings: Settings, c: CallLog) -> bool:
+    return not is_within_hours(settings, as_utc(c.started_at or c.created_at).astimezone(settings.tz), 1)
 
 
-@router.get("/", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def dashboard(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+def _short_name(name: str) -> str:
+    parts = name.split()
+    return f"{parts[0]} {parts[-1][0]}." if len(parts) > 1 else name
+
+
+def _fmt(settings: Settings, dt) -> str:
+    return as_utc(dt).astimezone(settings.tz).strftime("%a %b %d, %I:%M %p").replace(" 0", " ") if dt else ""
+
+
+def _schedule(db: Session, settings: Settings, n_days: int = 5) -> dict:
     tz = settings.tz
+    now_local = datetime.now(tz)
+    day, days = now_local.date(), []
+    while len(days) < n_days:
+        if day.weekday() in settings.open_weekdays:
+            days.append(day)
+        day += timedelta(days=1)
+    start = datetime.combine(days[0], time.min, tz).astimezone(timezone.utc)
+    end = datetime.combine(days[-1] + timedelta(days=1), time.min, tz).astimezone(timezone.utc)
+    appts = list(db.scalars(select(Appointment).where(
+        Appointment.status == "booked", Appointment.start_at >= start, Appointment.start_at < end)))
+    open_min = settings.open_hour.hour * 60 + settings.open_hour.minute
+    close_min = settings.close_hour.hour * 60 + settings.close_hour.minute
 
-    def fmt(dt):
-        return as_utc(dt).astimezone(tz).strftime("%a %b %d, %I:%M %p") if dt else ""
+    def y(minutes: int) -> int:
+        return int((minutes - open_min) / 30 * ROW_PX)
 
-    now = datetime.now(timezone.utc)
-    appts = db.scalars(
-        select(Appointment).where(Appointment.status == "booked", Appointment.start_at >= now).order_by(Appointment.start_at).limit(50)
-    )
-    calls = db.scalars(select(CallLog).order_by(CallLog.created_at.desc()).limit(25))
+    cols = []
+    for d in days:
+        items = []
+        for a in appts:
+            s = as_utc(a.start_at).astimezone(tz)
+            if s.date() != d:
+                continue
+            mins = s.hour * 60 + s.minute
+            dur = int((as_utc(a.end_at) - as_utc(a.start_at)).total_seconds() // 60)
+            items.append({
+                "top": y(mins) + 1, "h": max(int(dur / 30 * ROW_PX) - 3, 26), "left": 0 if a.chair == 1 else 50,
+                "name": _short_name(a.patient_name), "full_name": a.patient_name, "label": SHORT.get(a.service, a.service), "chair": a.chair,
+                "time": s.strftime("%I:%M").lstrip("0"), "color": SERVICE_COLORS.get(a.service, "#1f4fe0"),
+                "ai": bool(a.source_call_id),
+            })
+        c = close_time(settings, d)
+        c_min = c.hour * 60 + c.minute
+        cols.append({
+            "name": "Today" if d == now_local.date() else d.strftime("%A"), "date": d.strftime("%b %d"),
+            "today": d == now_local.date(), "appts": items, "count": len(items),
+            "close_top": y(c_min) if c_min < close_min else None,
+        })
+    hours = []
+    for m in range(open_min, close_min, 30):
+        hours.append(datetime.combine(days[0], time(m // 60, m % 60)).strftime("%I %p").lstrip("0") if m % 60 == 0 else "")
+    lunch_s = settings.lunch_start.hour * 60 + settings.lunch_start.minute
+    lunch_e = settings.lunch_end.hour * 60 + settings.lunch_end.minute
+    return {
+        "days": cols, "hours": hours, "grid_height": y(close_min),
+        "lunch_top": y(lunch_s), "lunch_h": y(lunch_e) - y(lunch_s),
+        "legend": [(k, SHORT[k], SERVICE_COLORS[k]) for k in SERVICES],
+    }
+
+
+@router.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def dashboard(request: Request, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    if settings.demo_mode:
+        demo_data.ensure_fresh(db, settings)
+    calls = db.scalars(select(CallLog).order_by(CallLog.started_at.desc().nulls_last(), CallLog.created_at.desc()).limit(30))
     leads = db.scalars(select(Lead).order_by(Lead.created_at.desc()).limit(25))
-    return TEMPLATE.render(
-        clinic=settings.clinic_name,
-        tz=settings.clinic_timezone,
+    return render(
+        request, "dashboard.html",
         s=build_stats(db, settings),
-        appts=[
-            dict(when=fmt(a.start_at), name=a.patient_name, new=a.is_new_patient, service=SERVICES[a.service].label,
-                 phone=pretty_phone(a.phone), code=a.code, chair=a.chair)
-            for a in appts
-        ],
+        demo=settings.demo_mode,
+        address=settings.clinic_address,
+        chairs=settings.clinic_chairs,
+        tz=settings.clinic_timezone.replace("_", " "),
+        now_label=datetime.now(settings.tz).strftime("%I:%M %p").lstrip("0"),
         calls=[
-            dict(when=fmt(c.started_at or c.created_at), caller=pretty_phone(c.caller), outcome=c.outcome, summary=c.summary, rec=c.recording_url)
+            dict(when=_fmt(settings, c.started_at or c.created_at), caller=pretty_phone(c.caller), outcome=c.outcome,
+                 summary=c.summary, transcript=c.transcript, after_hours=_after_hours(settings, c),
+                 length=f"{c.duration_seconds // 60}:{c.duration_seconds % 60:02d}" if c.duration_seconds else "")
             for c in calls
         ],
         leads=[
-            dict(when=fmt(l.created_at), name=l.name, phone=pretty_phone(l.phone), reason=l.reason, insurance=l.insurance, urgency=l.urgency)
-            for l in leads
+            dict(when=_fmt(settings, lead.created_at), name=lead.name, phone=pretty_phone(lead.phone), reason=lead.reason,
+                 insurance=lead.insurance, urgency=lead.urgency, status=lead.status)
+            for lead in leads
         ],
+        **_schedule(db, settings),
     )
 
 

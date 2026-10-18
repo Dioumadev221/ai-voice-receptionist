@@ -1,10 +1,16 @@
-# AI Voice Receptionist for Dental Clinics
+# Recepta: AI Voice Receptionist for Dental Clinics
 
-A phone agent that answers every call, books, reschedules and cancels appointments against the clinic's real schedule, texts confirmations and reminders, and hands staff a dashboard of everything it did.
+A voice agent that answers every call, books, reschedules and cancels appointments against the clinic's real schedule, texts confirmations and reminders, and hands staff a dashboard of everything it did.
 
-Built with **Vapi** (voice), **FastAPI** (tool webhooks), **PostgreSQL** (bookings), **Google Calendar** (two-way sync) and **Twilio** (SMS).
+Built with **Vapi** (phone voice), **FastAPI** (tools and conversation API), **PostgreSQL** (bookings), **Google Calendar** (two-way sync) and **Twilio** (SMS).
 
-![Dashboard](docs/img/dashboard.png)
+**Live demo:** talk to Ava from your browser at `/call` and watch the booking land on the public dashboard at `/dashboard` (sample clinic, fictional 555 numbers, reset every day).
+
+![Recepta](docs/media/1-product.png)
+
+| Live call with tool trace | Front-desk dashboard |
+| --- | --- |
+| ![Call](docs/media/2-live-call.png) | ![Dashboard](docs/media/3-dashboard.png) |
 
 ## The problem
 
@@ -48,8 +54,13 @@ Caller ──► Phone number (Twilio / Vapi) ──► Vapi assistant (STT · G
                                       ├── booking engine ── PostgreSQL
                                       ├── Google Calendar (push events, read staff blocks)
                                       ├── Twilio SMS (confirmations, reminders, staff alerts)
-                                      └── /  dashboard · /demo browser call · /jobs/reminders (cron)
+                                      └── /dashboard · /jobs/reminders (cron)
+
+Browser ──► /call (Web Speech: speech-to-text, text-to-speech)
+              └── POST /api/converse ──► dialogue engine or LLM ──► the same 7 tools
 ```
+
+The browser demo line uses the exact tools and booking engine the phone agent uses. With `LLM_API_KEY` set it runs an OpenAI-compatible model with function calling; without it, a deterministic dialogue engine drives the same tools, so the public demo costs nothing to run.
 
 | Path | Purpose |
 | --- | --- |
@@ -57,10 +68,13 @@ Caller ──► Phone number (Twilio / Vapi) ──► Vapi assistant (STT · G
 | `app/tools.py` | The 7 tools the agent can call, and their JSON schemas (single source of truth) |
 | `app/vapi.py` | Vapi webhook: auth, tool dispatch, call logging |
 | `app/integrations/` | Google Calendar and Twilio, both fail-safe (an outage never breaks a call) |
-| `app/dashboard.py` | Front-desk dashboard (HTTP Basic) |
+| `app/converse.py` | Browser conversation: LLM tool loop, or rules-based dialogue engine |
+| `app/web.py` | Product site, `/call` demo line, `/api/converse`, daily demo reset |
+| `app/dashboard.py` | Front-desk dashboard (HTTP Basic, public in demo mode) |
+| `app/demo_data.py` | Sample clinic data, rebuilt daily in demo mode |
 | `vapi/system_prompt.md` | The agent's instructions |
 | `scripts/vapi_setup.py` | Creates / updates the Vapi assistant from code |
-| `scripts/seed_demo.py` | A month of realistic demo data |
+| `scripts/seed_demo.py` | Rebuild the sample clinic data |
 
 ## Run it locally
 
@@ -68,7 +82,8 @@ Caller ──► Phone number (Twilio / Vapi) ──► Vapi assistant (STT · G
 cp .env.example .env            # defaults work with no external accounts
 docker compose up --build       # API + PostgreSQL on http://localhost:8000
 docker compose exec api python scripts/seed_demo.py
-# Dashboard: http://localhost:8000  (admin / ADMIN_PASSWORD)
+# Site: http://localhost:8000 · demo line: /call · dashboard: /dashboard (admin / ADMIN_PASSWORD)
+# Set DEMO_MODE=true to make the dashboard public with daily-reset sample data
 ```
 
 Simulate a tool call exactly as Vapi sends it:
@@ -90,7 +105,9 @@ TEST_DATABASE_URL=postgresql://user:pass@localhost/voice pytest -q
 
 ## Deploy
 
-`render.yaml` deploys the API, a managed PostgreSQL and an hourly reminder cron on Render in one step. Any Docker host works (Railway, Fly.io, a VPS). Then:
+**Public demo, free tier (Vercel + Neon).** Import the repository in Vercel, add a Neon Postgres database from the Storage tab (it sets `DATABASE_URL`), set `DEMO_MODE=true`, deploy. `vercel.json` routes everything to the FastAPI app and schedules the daily demo reset. Optional: `LLM_API_KEY` (and `LLM_BASE_URL`, `LLM_MODEL` for any OpenAI-compatible provider) to let a language model drive the demo line.
+
+**Production for a clinic.** `render.yaml` deploys the API, a managed PostgreSQL and an hourly reminder cron on Render in one step. Any Docker host works (Railway, Fly.io, a VPS). Then:
 
 ```bash
 python scripts/vapi_setup.py --server-url https://<your-app>
@@ -112,3 +129,7 @@ A clinic taking 600 calls a month at 2.5 minutes each spends roughly $200 on voi
 ## Adapting it
 
 Clinic hours, chairs, timezone and services are configuration (`.env` and `app/clinic.py`). The same backend fits physiotherapy, veterinary, beauty salons or any appointment-based business by editing the service catalogue and the prompt.
+
+## Credits
+
+Fonts: Fraunces and Manrope, SIL Open Font License 1.1.

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Recepta · AI receptionist for dental clinics{% endblock %}</title>
+<meta name="description" content="Recepta answers every call to your dental clinic, books, moves and cancels appointments on your real schedule, and texts patients a confirmation.">
+<meta property="og:title" content="{% block og_title %}Recepta · Every call answered. Every chair filled.{% endblock %}">
+<meta property="og:description" content="AI voice receptionist for dental clinics: books, reschedules and cancels appointments 24/7 on the real schedule. Try the live demo line in your browser.">
+<meta property="og:type" content="website">
+{% if public_url %}<meta property="og:url" content="{{ public_url }}{{ request_path }}">
+<meta property="og:image" content="{{ public_url }}/static/og.png">{% endif %}
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<link rel="preload" href="/static/fonts/manrope.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/static/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/recepta.css?v=3">
+{% block head %}{% endblock %}
+</head>
+<body>
+{% block body %}{% endblock %}
+</body>
+</html>

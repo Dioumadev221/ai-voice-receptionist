@@ -53,6 +53,13 @@ def _alternatives(db, settings, service, day, exclude_id=None) -> str:
 def check_availability(db: Session, settings: Settings, ctx: CallContext, args: dict) -> str:
     service = resolve_service(args.get("service"))
     day = parse_date(args.get("date") or datetime.now(settings.tz).date().isoformat())
+    if args.get("time"):  # the caller asked for one precise time
+        start = datetime.combine(day, parse_time(args["time"]), settings.tz)
+        if booking.is_free(db, settings, service, start, busy_provider=calendar.busy_blocks):
+            return f"AVAILABLE: {speak_datetime(start)} [date={day.isoformat()} time={start.strftime('%H:%M')}] is free for a {service.label}."
+        alternatives = booking.find_slots(db, settings, service, day, busy_provider=calendar.busy_blocks)
+        alt = f" Closest open times: {_slot_list(settings, alternatives)}." if alternatives else ""
+        return f"NOT AVAILABLE: {speak_datetime(start)} is taken or outside opening hours.{alt}"
     slots = booking.find_slots(
         db, settings, service, day, part_of_day=args.get("part_of_day"), busy_provider=calendar.busy_blocks
     )
@@ -204,6 +211,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "service": _SERVICE,
                 "date": {**_DATE, "description": "First day to search from (YYYY-MM-DD)."},
                 "part_of_day": {"type": "string", "enum": ["morning", "afternoon", "any"]},
+                "time": {**_TIME, "description": "Only when the caller asks for one precise time (HH:MM): checks that exact slot."},
             },
             "required": ["service", "date"],
         },

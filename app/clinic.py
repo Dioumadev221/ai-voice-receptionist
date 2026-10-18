@@ -36,6 +36,11 @@ SERVICE_ALIASES = {
     "whitening": "whitening",
     "consult": "consultation", "consultation": "consultation", "invisalign": "consultation", "implant": "consultation",
     "emergency": "emergency", "pain": "emergency", "toothache": "emergency", "broken": "emergency",
+    "chipped": "emergency", "cracked": "emergency", "hurts": "emergency", "swollen": "emergency", "ache": "emergency",
+    "knocked out": "emergency", "bleeding": "emergency",
+    "polish": "cleaning", "routine": "checkup", "examination": "checkup",
+    "first time": "new_patient", "never been": "new_patient",
+    "bleach": "whitening", "whiter": "whitening", "braces": "consultation", "veneer": "consultation",
 }
 
 
@@ -48,8 +53,10 @@ def resolve_service(raw: str | None) -> Service:
     if key in SERVICES:
         return SERVICES[key]
     text = key.replace("_", " ")
-    for alias, target in SERVICE_ALIASES.items():
-        if alias in text:
+    # Emergencies win over everything, then first visits ("new patient exam" is not a check-up)
+    priority = {"emergency": 0, "new_patient": 1}
+    for alias, target in sorted(SERVICE_ALIASES.items(), key=lambda kv: priority.get(kv[1], 9)):
+        if re.search(r"\b" + re.escape(alias), text):
             return SERVICES[target]
     options = ", ".join(s.label for s in SERVICES.values())
     raise BookingError(f"I couldn't match that to one of our services. We offer: {options}.")

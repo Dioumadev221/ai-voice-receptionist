@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · {{ clinic }} · Recepta{% endblock %}
+{% block body %}
+<div class="app">
+  <aside class="sidebar">
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="">Recepta</a>
+    <nav>
+      <a class="active" href="#overview">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/></svg>Overview</a>
+      <a href="#schedule">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>Schedule</a>
+      <a href="#calls">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>Calls</a>
+      <a href="#leads">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Callbacks</a>
+      <a href="/call" target="_blank" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg>Test line ↗</a>
+    </nav>
+    <div class="clinic"><b>{{ clinic }}</b>{{ address }}<br>{{ chairs }} chairs · {{ tz }}</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar" id="overview">
+      <div><h1>Front desk</h1><div class="muted" style="font-size:14px">Last 30 days · updated {{ now_label }}</div></div>
+      <div class="spacer"></div>
+      {% if demo %}<span class="pill">Sample clinic · resets daily</span>{% endif %}
+      <span class="pill live"><span class="dot"></span> Ava is answering</span>
+    </div>
+
+    <div class="kpis">
+      <div class="card kpi"><div class="v">{{ s.calls }}</div><div class="l">Calls answered</div></div>
+      <div class="card kpi"><div class="v">{{ s.booked }}</div><div class="l">Booked by Ava</div></div>
+      <div class="card kpi"><div class="v">{{ s.resolution_rate }}%</div><div class="l">Handled without staff</div></div>
+      <div class="card kpi"><div class="v">{{ s.after_hours }}</div><div class="l">Calls while closed</div></div>
+      <div class="card kpi"><div class="v">{{ s.leads }}</div><div class="l">Callback requests</div></div>
+      <div class="card kpi"><div class="v">{{ s.avg_minutes }}<span style="font-size:15px"> min</span></div><div class="l">Average call</div></div>
+    </div>
+
+    <div class="dash-grid">
+      <div class="card" id="schedule">
+        <div class="card-h">
+          <h3>Schedule · next {{ days|length }} open days</h3>
+          <div class="legend">{% for key, label, color in legend %}<span style="--c:{{ color }}"><i></i>{{ label }}</span>{% endfor %}</div>
+        </div>
+        <div class="week" style="--days:{{ days|length }}">
+          <div></div>
+          {% for d in days %}<div class="col-h {% if d.today %}today{% endif %}">{{ d.name }}<span>{{ d.date }} · {{ d.count }} visits</span></div>{% endfor %}
+          <div class="times">{% for t in hours %}<div>{{ t }}</div>{% endfor %}</div>
+          {% for d in days %}
+          <div class="day" style="height:{{ grid_height }}px">
+            <div class="lunch" style="top:{{ lunch_top }}px;height:{{ lunch_h }}px">Lunch</div>
+            {% if d.close_top %}<div class="lunch" style="top:{{ d.close_top }}px;bottom:0">Closed</div>{% endif %}
+            {% for a in d.appts %}
+            <div class="appt {% if a.ai %}ai{% endif %}" style="--c:{{ a.color }};top:{{ a.top }}px;height:{{ a.h }}px;left:calc({{ a.left }}% + 3px);width:calc(50% - 6px)" title="{{ a.time }} · {{ a.full_name }} · {{ a.label }} · chair {{ a.chair }}{% if a.ai %} · booked by Ava{% endif %}">
+              <b>{{ a.name }}</b><span>{{ a.label }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card" id="calls">
+        <div class="card-h"><h3>Recent calls</h3><span class="muted" style="font-size:13px">Summaries and transcripts from every call</span></div>
+        <div class="scroll-x"><table class="t">
+          <tr><th>When</th><th>Caller</th><th>Outcome</th><th>Summary</th><th>Length</th></tr>
+          {% for c in calls %}
+          <tr>
+            <td class="nowrap">{{ c.when }}{% if c.after_hours %}<div class="muted" style="font-size:12px">clinic closed</div>{% endif %}</td>
+            <td class="nowrap">{{ c.caller }}</td>
+            <td><span class="tag {{ c.outcome }}">{{ c.outcome }}</span></td>
+            <td>{{ c.summary }}{% if c.transcript %}<details class="tx"><summary>Transcript</summary><pre>{{ c.transcript }}</pre></details>{% endif %}</td>
+            <td class="nowrap muted">{{ c.length }}</td>
+          </tr>
+          {% else %}<tr><td colspan="5" class="muted">No calls yet.</td></tr>{% endfor %}
+        </table></div>
+      </div>
+
+      <div class="card" id="leads">
+        <div class="card-h"><h3>Callback list</h3><span class="muted" style="font-size:13px">Pricing, insurance and anything Ava shouldn't answer alone</span></div>
+        <div class="scroll-x"><table class="t">
+          <tr><th>When</th><th>Name</th><th>Phone</th><th>Request</th><th>Insurance</th><th>Status</th></tr>
+          {% for l in leads %}
+          <tr><td class="nowrap">{{ l.when }}</td><td class="nowrap"><b>{{ l.name }}</b></td><td class="nowrap">{{ l.phone }}</td><td>{{ l.reason }}</td><td class="nowrap">{{ l.insurance or "—" }}</td>
+          <td>{% if l.urgency == "urgent" %}<span class="tag urgent">urgent</span>{% else %}<span class="tag {% if l.status == 'new' %}lead{% endif %}">{{ l.status }}</span>{% endif %}</td></tr>
+          {% else %}<tr><td colspan="6" class="muted">No callback requests.</td></tr>{% endfor %}
+        </table></div>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}
