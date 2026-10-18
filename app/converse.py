@@ -416,6 +416,14 @@ class RulesEngine:
 
     # -- main
     def turn(self, text: str) -> tuple[str, bool]:
+        reply, ended = self._turn(text)
+        # Asking the exact same question twice in a row sounds broken: acknowledge the miss instead.
+        if reply == self.st.get("last_reply") and not ended:
+            reply = "Sorry, I didn't catch that. " + reply
+        self.st["last_reply"] = reply
+        return reply, ended
+
+    def _turn(self, text: str) -> tuple[str, bool]:
         step = self.st.get("step")
         intent = detect_intent(text)
 
@@ -442,8 +450,9 @@ class RulesEngine:
             return f"Thanks for calling {self.s.clinic_name}. Have a great day!", True
         if intent == "info":
             if _has(r"\b(address|where|located|location|directions|parking|find you)\b", text):
-                return self.done(f"We're at {self.s.clinic_address}. There's free parking behind the building.")
-            return self.done(opening_hours_sentence(self.s))
+                return self.done(f"We're at {self.s.clinic_address}. There's free parking behind the building.",
+                                 summary="Caller asked for the clinic address and parking.")
+            return self.done(opening_hours_sentence(self.s), summary="Caller asked about opening hours.")
         if intent in ("lead", "human"):
             self.st["lead_reason"] = text
             self.st["step"] = "lead_name"
@@ -454,13 +463,29 @@ class RulesEngine:
                     "with real numbers. Can I get your name?"), False
         if intent in ("cancel", "reschedule"):
             return self.start_manage(intent, text)
-        if intent == "book":
+        # A day or time with no other request ("next Tuesday morning") is someone trying to book.
+        if intent == "book" or (intent is None and (parse_day(text, self.today) or parse_part(text))):
+            self.st["misses"] = 0
             return self.start_booking(text)
         if self.st.get("step") == "anything_else" and is_no(text):
             self.st["step"] = None
             return f"Thanks for calling {self.s.clinic_name}. Have a great day!", True
-        return ("I can book, move or cancel an appointment, or answer questions about the clinic. "
-                "What would you like to do?"), False
+        return self.not_understood()
+
+    def not_understood(self) -> tuple[str, bool]:
+        """Never repeat the same line: rephrase, then give examples, then offer a human callback."""
+        misses = self.st["misses"] = self.st.get("misses", 0) + 1
+        if misses == 1:
+            return ("Sorry, I didn't quite catch that. Are you calling to book a visit, change an appointment, "
+                    "or with a question about the clinic?"), False
+        if misses == 2:
+            return ("Let me make it easier. You can say, for example: I'd like a cleaning on Tuesday, "
+                    "I need to move my appointment, or what are your hours?"), False
+        self.st["misses"] = 0
+        self.st["lead_reason"] = "Caller could not be understood by the assistant; wants help"
+        self.st["step"] = "lead_name"
+        return ("I'm sorry, I'm having trouble understanding. I can have someone from the front desk call you back. "
+                "What's your name?"), False
 
     # -- booking
     def start_booking(self, text: str) -> tuple[str, bool]:

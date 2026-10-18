@@ -175,3 +175,22 @@ def test_caller_asks_for_a_time_that_was_not_offered(client):
     assert "full name" in r or "isn't available" in r
     r = c.say("what about 11 at night")
     assert "isn't available" in r or "full name" in r
+
+
+def test_unclear_caller_is_helped_not_looped(client):
+    c = Call(client)
+    r1 = c.say("it's okay all right")
+    r2 = c.say("I like to do it")
+    r3 = c.say("hmm")
+    assert len({r1, r2, r3}) == 3
+    assert "call you back" in r3
+    c.say("Maria Garcia")
+    assert c.events[-1]["tool"] == "capture_lead"
+
+
+def test_a_day_alone_starts_a_booking(client):
+    c = Call(client)
+    r = c.say("Next Tuesday tomorrow")
+    assert "What is the visit for" in r
+    r = c.say("a cleaning")
+    assert "Which one works best" in r
